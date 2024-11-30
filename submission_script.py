@@ -274,7 +274,7 @@ loaded_model = load("trained_pipeline.joblib")
 predictions = loaded_model.predict(merged_test_df)
 
 submission = pd.DataFrame({
-    'Id': test_data.index,
+    'Id': range(1, len(predictions) + 1),
     'log_bike_count': predictions
 })
 submission.to_csv('submission.csv', index=False)
