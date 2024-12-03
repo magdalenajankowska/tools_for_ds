@@ -134,6 +134,7 @@ from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.metrics import mean_squared_error, r2_score
 import xgboost as xgb
 from sklearn.feature_selection import SelectKBest, f_regression
+from sklearn.model_selection import GridSearchCV
 
 '''def create_time_features(df):
     """Create additional time-based features"""
@@ -202,11 +203,14 @@ def build_model_pipeline():
         ('preprocessor', preprocessor),
         ('feature_selection', SelectKBest(score_func=f_regression, k=50)),
         ('regressor', xgb.XGBRegressor(
-            n_estimators=200,
-            learning_rate=0.1,
-            max_depth=6,
+            n_estimators=500,
+            learning_rate=0.05,
+            max_depth=4,
             subsample=0.8,
             colsample_bytree=0.8,
+            reg_alpha=1,  # L1 regularization
+            reg_lambda=10,  # L2 regularization
+            min_child_weight=5,  # Require more samples in leaf nodes
             random_state=42
         ))
     ])
@@ -217,7 +221,7 @@ def build_model_pipeline():
 def evaluate_model(pipeline, X, y):
     
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
+        X, y, test_size=0.3, random_state=42
     )
 
     pipeline.fit(X_train, y_train)
@@ -238,14 +242,31 @@ def evaluate_model(pipeline, X, y):
 
     return pipeline
 
+
 pipeline = build_model_pipeline()
 columns_to_exclude = ['bike_count', 'log_bike_count']
 X = merged_df.drop(columns=columns_to_exclude)
 y = merged_df['log_bike_count']
-model = evaluate_model(pipeline, X, y)
+
+# Use GridSearchCV to tune hyperparameters
+param_grid = {
+    'regressor__n_estimators': [100, 300, 500],
+    'regressor__learning_rate': [0.01, 0.05, 0.1],
+    'regressor__max_depth': [3, 4, 5],
+    'regressor__min_child_weight': [1, 5, 10],
+    'regressor__subsample': [0.7, 0.8, 0.9],
+    'regressor__colsample_bytree': [0.7, 0.8, 0.9],
+    'regressor__reg_alpha': [0, 0.1, 1],
+    'regressor__reg_lambda': [1, 5, 10]
+}
+
+grid_search = GridSearchCV(pipeline, param_grid, cv=3, scoring='neg_root_mean_squared_error', n_jobs=-1, verbose=2)
+grid_search.fit(X, y)
+
+best_pipeline = grid_search.best_estimator_
 
 from joblib import dump
-dump(model, 'trained_pipeline.joblib')
+dump(best_pipeline, 'trained_pipeline.joblib')
 
 merged_test_df['hour_sin'] = np.sin(2 * np.pi * merged_test_df['hour']/24)
 merged_test_df['hour_cos'] = np.cos(2 * np.pi * merged_test_df['hour']/24)
