@@ -250,14 +250,12 @@ y = merged_df['log_bike_count']
 
 # Use GridSearchCV to tune hyperparameters
 param_grid = {
-    'regressor__n_estimators': [100, 300, 500],
-    'regressor__learning_rate': [0.01, 0.05, 0.1],
-    'regressor__max_depth': [3, 4, 5],
-    'regressor__min_child_weight': [1, 5, 10],
-    'regressor__subsample': [0.7, 0.8, 0.9],
-    'regressor__colsample_bytree': [0.7, 0.8, 0.9],
-    'regressor__reg_alpha': [0, 0.1, 1],
-    'regressor__reg_lambda': [1, 5, 10]
+
+    'regressor__n_estimators': [100, 300],
+    'regressor__learning_rate': [0.05, 0.1],
+    'regressor__max_depth': [3, 5],
+    'regressor__subsample': [0.7, 0.9],
+    'regressor__colsample_bytree': [0.7, 0.9]
 }
 
 grid_search = GridSearchCV(pipeline, param_grid, cv=3, scoring='neg_root_mean_squared_error', n_jobs=-1, verbose=2)
