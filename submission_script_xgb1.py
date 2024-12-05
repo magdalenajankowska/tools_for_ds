@@ -21,6 +21,9 @@ weather_df = weather_df.dropna(axis=1, thresh=threshold)
 weather_df = weather_df[["date", "t","ff", "pres", "rafper", "u", "vv", "rr1", "rr3", "rr6", "rr12"]]
 # Replace negative values in the 'rr1' column with 0
 weather_df['rr1'] = weather_df['rr1'].apply(lambda x: max(x, 0))
+weather_df['rr3'] = weather_df['rr3'].apply(lambda x: max(x, 0))
+weather_df['rr6'] = weather_df['rr6'].apply(lambda x: max(x, 0))
+weather_df['rr12'] = weather_df['rr12'].apply(lambda x: max(x, 0))
 
 weather_df['date'] = pd.to_datetime(weather_df['date'])
 weather_df.set_index('date', inplace=True)
