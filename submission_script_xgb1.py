@@ -57,13 +57,20 @@ def _encode_dates(X):
     X['is_weekend'] = X['day_of_week'].apply(lambda x: 1 if x >= 5 else 0) # 1: weekend, 0: weekday
     X['is_holiday'] = X['date'].apply(is_holiday)
 
+    X['hour_sin'] = np.sin(2 * np.pi * X['hour']/24)
+    X['hour_cos'] = np.cos(2 * np.pi * X['hour']/24)
+    X['day_of_week_sin'] = np.sin(2 * np.pi * X['day_of_week']/7)
+    X['day_of_week_cos'] = np.cos(2 * np.pi * X['day_of_week']/7)
+    X['month_sin'] = np.sin(2 * np.pi * X['month']/12)
+    X['month_cos'] = np.cos(2 * np.pi * X['month']/12)
+
     # Finally we can drop the original columns from the dataframe
     return X.drop(columns=["date"])
 
 def _encode_features(X):
     X = X.copy()
-    #X['temp_hour'] = X['t'] * X['hour_sin']
-    X['temp_hour'] = X['t'] * X['hour']
+    X['temp_hour'] = X['t'] * X['hour_sin']
+    #X['temp_hour'] = X['t'] * X['hour']
     X['weekend_temp'] = X['t'] * X['is_weekend']
 
 
@@ -86,7 +93,13 @@ merged_df = _encode_features(merged_df)
 
 # Define feature columns
 categorical_columns = ['counter_name', 'is_weekend', 'is_holiday']
-numerical_columns = ["latitude", "longitude", "t", "ff", "pres", "rafper", "u", "vv", "rr1", "year", "month", "day", "weekday", "hour", 'day_of_week', 'temp_hour', 'weekend_temp', 'comfort_index', 'rain_intensity', 'high_wind']
+numerical_columns = ["latitude", "longitude", "t", "ff", "pres", "rafper",
+                     "u", "vv", "rr1", "year", "month", "day", "weekday",
+                     "hour", 'day_of_week', 'temp_hour', 'weekend_temp',
+                     'comfort_index', 'rain_intensity', 'high_wind',
+                     'hour_sin', 'hour_cos', 'day_of_week_sin',
+                     'day_of_week_cos', 'month_sin', 'month_cos'
+    ]
 target_column = "log_bike_count"
 
 # Split data into features and target
