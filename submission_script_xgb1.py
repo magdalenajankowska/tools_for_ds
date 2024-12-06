@@ -14,6 +14,37 @@ train_df = train_df[['counter_name', 'date', 'latitude', 'longitude', 'log_bike_
 
 test_df = pd.read_parquet("/kaggle/input/msdb-2024/final_test.parquet")
 
+
+for data in [train_df, test_df]:
+    # Load the COVID-19 data from the URL
+    covid_url = "https://static.data.gouv.fr/resources/donnees-relatives-a-lepidemie-de-covid-19-en-france-vue-densemble/20220517-222620/synthese-fra.csv"
+    covid_df = pd.read_csv(covid_url, delimiter=",")
+
+    # Ensure the 'date' column is in datetime format
+    covid_df['date'] = pd.to_datetime(covid_df['date'])
+
+    # Calculate the daily new cases by subtracting the previous day's total confirmed cases
+    covid_df['new_covid_cases'] = covid_df['total_cas_confirmes'].diff().fillna(0)
+
+    df = pd.DataFrame(data)
+    df['date'] = pd.to_datetime(df['date'])
+
+    # Extract the date (without time) from the bike data
+    df['date_only'] = df['date'].dt.date
+
+    # Ensure the same for COVID data (extract date without time)
+    covid_df['date_only'] = covid_df['date'].dt.date
+
+    # Merge the COVID data with your bike data based on the date (ignoring the time part)
+    data = pd.merge(df, covid_df[['date_only', 'new_covid_cases']], on='date_only', how='left')
+
+    # Drop the 'date_only' column as it's no longer needed
+    data.drop('date_only', axis=1, inplace=True)
+
+    # Calculate the 7-day rolling average of new COVID cases
+    data['7_day_rolling_avg_covid'] = data['new_covid_cases'].rolling(window=7, min_periods=1).mean()
+
+
 weather_df = pd.read_csv("/kaggle/input/msdb-2024/external_data.csv")
 # Drop columns with many nan values
 threshold = len(weather_df) * 0.8
@@ -98,7 +129,8 @@ numerical_columns = ["latitude", "longitude", "t", "ff", "pres", "rafper",
                      "hour", 'day_of_week', 'temp_hour', 'weekend_temp',
                      'comfort_index', 'rain_intensity', 'high_wind',
                      'hour_sin', 'hour_cos', 'day_of_week_sin',
-                     'day_of_week_cos', 'month_sin', 'month_cos'
+                     'day_of_week_cos', 'month_sin', 'month_cos',
+                     '7_day_rolling_avg_covid', 'new_covid_cases'
     ]
 target_column = "log_bike_count"
 
@@ -128,6 +160,7 @@ pipeline = Pipeline(steps=[("preprocessor", preprocessor), ("model", xgb_model)]
 
 # Train the model
 pipeline.fit(X_train, y_train)
+print(f'Feature importances: {pipeline.feature_importances_}')
 
 # Make predictions
 y_pred = pipeline.predict(X_test)
@@ -142,7 +175,7 @@ from sklearn.model_selection import GridSearchCV
 param_grid = {
     "model__n_estimators": [250, 300, 350],
     "model__max_depth": [ 8, 9, 10],
-    "model__learning_rate": [0.25, 0.3, 0.4]
+    "model__learning_rate": [0.2, 0.25, 0.3]
 }
 
 # Use GridSearchCV to find the best hyperparameters
@@ -157,6 +190,8 @@ grid_search = GridSearchCV(
 
 # Fit GridSearchCV
 grid_search.fit(X_train, y_train)
+
+print(f'Feature importances: {grid_search.feature_importances_}')
 
 # Get the best parameters
 best_params = grid_search.best_params_
