@@ -55,7 +55,7 @@ weather_df = pd.read_csv("/kaggle/input/msdb-2024/external_data.csv")
 # Drop columns with many nan values
 threshold = len(weather_df) * 0.8
 weather_df = weather_df.dropna(axis=1, thresh=threshold)
-weather_df = weather_df["date", "t","ff", "pres", "rafper", "u", "vv",
+weather_df = weather_df[["date", "t","ff", "pres", "rafper", "u", "vv",
                          "rr1", "rr3", "rr6", "rr12", 'td', 'ww',
                         'raf10', 'etat_sol']]
 
@@ -96,6 +96,13 @@ def _encode_dates(X):
 
     X['is_weekend'] = X['day_of_week'].apply(lambda x: 1 if x >= 5 else 0) # 1: weekend, 0: weekday
     X['is_holiday'] = X['date'].apply(is_holiday)
+
+    X['hour_sin'] = np.sin(2 * np.pi * X['hour']/24)
+    X['hour_cos'] = np.cos(2 * np.pi * X['hour']/24)
+    X['day_of_week_sin'] = np.sin(2 * np.pi * X['day_of_week']/7)
+    X['day_of_week_cos'] = np.cos(2 * np.pi * X['day_of_week']/7)
+    X['month_sin'] = np.sin(2 * np.pi * X['month']/12)
+    X['month_cos'] = np.cos(2 * np.pi * X['month']/12)
 
     # Finally we can drop the original columns from the dataframe
     return X.drop(columns=["date"])
