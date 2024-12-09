@@ -5,19 +5,17 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-import xgboost as xgb
+from catboost import CatBoostRegressor
 from sklearn.metrics import mean_squared_error
 import holidays
 
-#train_df = pd.read_parquet("/kaggle/input/msdb-2024/train.parquet")
+# Read data
 train_df = pd.read_parquet("data/train.parquet")
 train_df = train_df[['counter_name', 'date', 'latitude', 'longitude',
                      'log_bike_count']]
 
-#test_df = pd.read_parquet("/kaggle/input/msdb-2024/final_test.parquet")
 test_df = pd.read_parquet("data/final_test.parquet")
 test_df = test_df[['counter_name', 'date', 'latitude', 'longitude']]
-
 
 def add_covid(data):
     url = "https://opendata.ecdc.europa.eu/covid19/nationalcasedeath_eueea_daily_ei/csv"
@@ -26,10 +24,7 @@ def add_covid(data):
     df = pd.read_csv(url)
 
     # Filter the DataFrame for France
-    covid_df = df[df['countriesAndTerritories'] == 'France']  # Replace 'country' with the actual column name if different
-
-    # Display the first few rows of the France DataFrame
-    print(covid_df.head())
+    covid_df = df[df['countriesAndTerritories'] == 'France']
 
     covid_df['date'] = pd.to_datetime(covid_df['dateRep'], format='%d/%m/%Y')
 
@@ -56,8 +51,9 @@ def add_covid(data):
 train_df = add_covid(train_df)
 test_df = add_covid(test_df)
 
-#weather_df = pd.read_csv("/kaggle/input/msdb-2024/external_data.csv")
+# Weather data preprocessing
 weather_df = pd.read_csv("external_data/external_data.csv")
+
 # Drop columns with many nan values
 threshold = len(weather_df) * 0.8
 weather_df = weather_df.dropna(axis=1, thresh=threshold)
@@ -68,11 +64,9 @@ weather_df = weather_df[["date", "t","ff", "pres", "rafper", "u", "vv",
 # Drop rows with any NaN values
 weather_df = weather_df.dropna()
 
-# Replace negative values in the 'rr1' column with 0
-weather_df['rr1'] = weather_df['rr1'].apply(lambda x: max(x, 0))
-weather_df['rr3'] = weather_df['rr3'].apply(lambda x: max(x, 0))
-weather_df['rr6'] = weather_df['rr6'].apply(lambda x: max(x, 0))
-weather_df['rr12'] = weather_df['rr12'].apply(lambda x: max(x, 0))
+# Replace negative values in rainfall columns with 0
+for col in ['rr1', 'rr3', 'rr6', 'rr12']:
+    weather_df[col] = weather_df[col].apply(lambda x: max(x, 0))
 
 weather_df['date'] = pd.to_datetime(weather_df['date'])
 weather_df.set_index('date', inplace=True)
@@ -85,17 +79,16 @@ weather_df.reset_index(inplace=True)
 
 # Merge the DataFrames on the 'date' column
 merged_df = pd.merge(train_df, weather_df, on='date', how='inner')
+merged_df_test = pd.merge(test_df, weather_df, on='date', how='inner')
 
-# Merge the DataFrames on the 'date' column
-merged_df_test  = pd.merge(test_df, weather_df, on='date', how='inner')
-
-holidays = holidays.CountryHoliday('France')
-def is_holiday(date): # 1: holiday, 0: not holiday
-    return 1 if date in holidays else 0
+# Holidays and date encoding
+holidays_fr = holidays.CountryHoliday('France')
+def is_holiday(date):
+    return 1 if date in holidays_fr else 0
 
 def _encode_dates(X):
-    X = X.copy()  # modify a copy of X
-    # Encode the date information from the DateOfDeparture columns
+    X = X.copy()
+    # Encode the date information from the date columns
     X["year"] = X["date"].dt.year
     X["month"] = X["date"].dt.month
     X["day"] = X["date"].dt.day
@@ -103,9 +96,10 @@ def _encode_dates(X):
     X["hour"] = X["date"].dt.hour
     X['day_of_week'] = X['date'].dt.dayofweek
 
-    X['is_weekend'] = X['day_of_week'].apply(lambda x: 1 if x >= 5 else 0) # 1: weekend, 0: weekday
+    X['is_weekend'] = X['day_of_week'].apply(lambda x: 1 if x >= 5 else 0)
     X['is_holiday'] = X['date'].apply(is_holiday)
 
+    # Cyclical encoding for time-based features
     X['hour_sin'] = np.sin(2 * np.pi * X['hour']/24)
     X['hour_cos'] = np.cos(2 * np.pi * X['hour']/24)
     X['day_of_week_sin'] = np.sin(2 * np.pi * X['day_of_week']/7)
@@ -113,17 +107,15 @@ def _encode_dates(X):
     X['month_sin'] = np.sin(2 * np.pi * X['month']/12)
     X['month_cos'] = np.cos(2 * np.pi * X['month']/12)
 
-    # Finally we can drop the original columns from the dataframe
     return X.drop(columns=["date"])
 
 def _encode_features(X):
     X = X.copy()
+    # Feature engineering
     X['temp_hour'] = X['t'] * X['hour_sin']
-    #X['temp_hour'] = X['t'] * X['hour']
     X['weekend_temp'] = X['t'] * X['is_weekend']
 
-
-    # Create comfort index (simplified version of feels-like temperature)
+    # Comfort index
     X['comfort_index'] = X['t'] - 0.55 * (1 - X['u']/100) * (X['t'] - 14)
 
     # Rain intensity categories
@@ -134,6 +126,7 @@ def _encode_features(X):
 
     # Wind categories
     X['high_wind'] = (X['ff'] > X['ff'].mean() + X['ff'].std()).astype(int)
+
     return X.drop(columns=["rr3", "rr6", "rr12"])
 
 # Encode date features
@@ -153,14 +146,14 @@ numerical_columns = ["latitude", "longitude", "t", "ff", "pres", "rafper",
     ]
 target_column = "log_bike_count"
 
-# Split data into features and target
+# Prepare the data
 X = merged_df[categorical_columns + numerical_columns]
 y = merged_df[target_column]
 
 # Split data into training and testing sets
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-# Preprocessing for numerical and categorical columns
+# Preprocessing
 numerical_preprocessor = StandardScaler()
 categorical_preprocessor = OneHotEncoder(handle_unknown="ignore")
 
@@ -171,39 +164,36 @@ preprocessor = ColumnTransformer(
     ]
 )
 
-# Define the XGBoost model
-xgb_model = xgb.XGBRegressor(objective="reg:squarederror", random_state=42)
+# Define CatBoost model
+catboost_model = CatBoostRegressor(
+    objective='RMSE',
+    random_seed=42,
+    verbose=0
+)
 
 # Create the pipeline
-pipeline = Pipeline(steps=[("preprocessor", preprocessor), ("model", xgb_model)])
+pipeline = Pipeline(steps=[
+    ("preprocessor", preprocessor),
+    ("model", catboost_model)
+])
 
-# Train the model
-pipeline.fit(X_train, y_train)
-
-# Make predictions
-y_pred = pipeline.predict(X_test)
-
-# Evaluate the model
-rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-print(f"RMSE: {rmse}")
-
-from sklearn.model_selection import GridSearchCV
-
-# Define the parameter grid
+# Define the parameter grid for CatBoost
 param_grid = {
-    "model__n_estimators": [250, 300, 350],
-    "model__max_depth": [ 8, 9, 10],
-    "model__learning_rate": [0.2, 0.25, 0.3]
+    "model__iterations": [340, 350, 400],
+    "model__depth": [9, 10, 12],
+    "model__learning_rate": [0.25, 0.3, 0.4]
 }
 
 # Use GridSearchCV to find the best hyperparameters
+from sklearn.model_selection import GridSearchCV
+
 grid_search = GridSearchCV(
     pipeline,
     param_grid=param_grid,
-    cv=3,  # 3-fold cross-validation
+    cv=3,
     scoring="neg_mean_squared_error",
     verbose=1,
-    n_jobs=-1,  # Use all available cores
+    n_jobs=-1
 )
 
 # Fit GridSearchCV
@@ -216,11 +206,11 @@ print(f"Best Parameters: {best_params}")
 # Access the best model from the grid search
 best_model = grid_search.best_estimator_
 
-# Get the XGBoost model from the pipeline
-xgb_model = best_model.named_steps["model"]
+# Get the CatBoost model from the pipeline
+catboost_model = best_model.named_steps["model"]
 
 # Get feature importances
-importances = xgb_model.feature_importances_
+importances = catboost_model.feature_importances_
 
 # Retrieve feature names
 preprocessor = best_model.named_steps["preprocessor"]
@@ -236,17 +226,20 @@ print("Feature Importances (sorted):")
 for feature, importance in feature_importances:
     print(f"{feature}: {importance}")
 
-
 # Evaluate the model with the best parameters
-best_model = grid_search.best_estimator_
 y_pred_best = best_model.predict(X_test)
 rmse_best = np.sqrt(mean_squared_error(y_test, y_pred_best))
 print(f"Best Model RMSE: {rmse_best}")
 
+# Prepare test data
 merged_df_test = _encode_dates(merged_df_test)
 merged_df_test = _encode_features(merged_df_test)
 X_pred = merged_df_test
+
+# Make predictions
 y_pred = best_model.predict(X_pred)
+
+# Create submission file
 results = pd.DataFrame(
     dict(
         Id=np.arange(y_pred.shape[0]),

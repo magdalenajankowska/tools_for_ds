@@ -1,23 +1,18 @@
 import pandas as pd
 import numpy as np
 
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-import xgboost as xgb
+from lightgbm import LGBMRegressor
 from sklearn.metrics import mean_squared_error
 import holidays
 
-#train_df = pd.read_parquet("/kaggle/input/msdb-2024/train.parquet")
-train_df = pd.read_parquet("data/train.parquet")
-train_df = train_df[['counter_name', 'date', 'latitude', 'longitude',
-                     'log_bike_count']]
+train_df = pd.read_parquet("/kaggle/input/msdb-2024/train.parquet")
+train_df = train_df[['counter_name', 'date', 'latitude', 'longitude', 'log_bike_count']]
 
-#test_df = pd.read_parquet("/kaggle/input/msdb-2024/final_test.parquet")
-test_df = pd.read_parquet("data/final_test.parquet")
-test_df = test_df[['counter_name', 'date', 'latitude', 'longitude']]
-
+test_df = pd.read_parquet("/kaggle/input/msdb-2024/final_test.parquet")
 
 def add_covid(data):
     url = "https://opendata.ecdc.europa.eu/covid19/nationalcasedeath_eueea_daily_ei/csv"
@@ -56,12 +51,11 @@ def add_covid(data):
 train_df = add_covid(train_df)
 test_df = add_covid(test_df)
 
-#weather_df = pd.read_csv("/kaggle/input/msdb-2024/external_data.csv")
-weather_df = pd.read_csv("external_data/external_data.csv")
+weather_df = pd.read_csv("/kaggle/input/msdb-2024/external_data.csv")
 # Drop columns with many nan values
 threshold = len(weather_df) * 0.8
 weather_df = weather_df.dropna(axis=1, thresh=threshold)
-weather_df = weather_df[["date", "t","ff", "pres", "rafper", "u", "vv",
+weather_df = weather_df["date", "t","ff", "pres", "rafper", "u", "vv",
                          "rr1", "rr3", "rr6", "rr12", 'td', 'ww',
                         'raf10', 'etat_sol']]
 
@@ -70,9 +64,6 @@ weather_df = weather_df.dropna()
 
 # Replace negative values in the 'rr1' column with 0
 weather_df['rr1'] = weather_df['rr1'].apply(lambda x: max(x, 0))
-weather_df['rr3'] = weather_df['rr3'].apply(lambda x: max(x, 0))
-weather_df['rr6'] = weather_df['rr6'].apply(lambda x: max(x, 0))
-weather_df['rr12'] = weather_df['rr12'].apply(lambda x: max(x, 0))
 
 weather_df['date'] = pd.to_datetime(weather_df['date'])
 weather_df.set_index('date', inplace=True)
@@ -106,20 +97,13 @@ def _encode_dates(X):
     X['is_weekend'] = X['day_of_week'].apply(lambda x: 1 if x >= 5 else 0) # 1: weekend, 0: weekday
     X['is_holiday'] = X['date'].apply(is_holiday)
 
-    X['hour_sin'] = np.sin(2 * np.pi * X['hour']/24)
-    X['hour_cos'] = np.cos(2 * np.pi * X['hour']/24)
-    X['day_of_week_sin'] = np.sin(2 * np.pi * X['day_of_week']/7)
-    X['day_of_week_cos'] = np.cos(2 * np.pi * X['day_of_week']/7)
-    X['month_sin'] = np.sin(2 * np.pi * X['month']/12)
-    X['month_cos'] = np.cos(2 * np.pi * X['month']/12)
-
     # Finally we can drop the original columns from the dataframe
     return X.drop(columns=["date"])
 
 def _encode_features(X):
     X = X.copy()
-    X['temp_hour'] = X['t'] * X['hour_sin']
-    #X['temp_hour'] = X['t'] * X['hour']
+    #X['temp_hour'] = X['t'] * X['hour_sin']
+    X['temp_hour'] = X['t'] * X['hour']
     X['weekend_temp'] = X['t'] * X['is_weekend']
 
 
@@ -171,13 +155,14 @@ preprocessor = ColumnTransformer(
     ]
 )
 
-# Define the XGBoost model
-xgb_model = xgb.XGBRegressor(objective="reg:squarederror", random_state=42)
 
-# Create the pipeline
-pipeline = Pipeline(steps=[("preprocessor", preprocessor), ("model", xgb_model)])
+# Define the LightGBM model
+lgb_model = LGBMRegressor(objective="regression", random_state=42)
 
-# Train the model
+# Create the pipeline with LightGBM
+pipeline = Pipeline(steps=[("preprocessor", preprocessor), ("model", lgb_model)])
+
+# Train the LightGBM model
 pipeline.fit(X_train, y_train)
 
 # Make predictions
@@ -187,13 +172,13 @@ y_pred = pipeline.predict(X_test)
 rmse = np.sqrt(mean_squared_error(y_test, y_pred))
 print(f"RMSE: {rmse}")
 
-from sklearn.model_selection import GridSearchCV
-
-# Define the parameter grid
+# Define the parameter grid for LightGBM
 param_grid = {
-    "model__n_estimators": [250, 300, 350],
-    "model__max_depth": [ 8, 9, 10],
-    "model__learning_rate": [0.2, 0.25, 0.3]
+    "model__n_estimators": [100, 200, 300],
+    "model__learning_rate": [0.05, 0.1, 0.2],
+    "model__num_leaves": [31, 50, 70],  # Controls tree complexity
+    "model__max_depth": [-1, 10, 20],  # -1 means no limit
+    "model__min_child_samples": [10, 20, 30]  # Minimum data per leaf
 }
 
 # Use GridSearchCV to find the best hyperparameters
@@ -203,7 +188,7 @@ grid_search = GridSearchCV(
     cv=3,  # 3-fold cross-validation
     scoring="neg_mean_squared_error",
     verbose=1,
-    n_jobs=-1,  # Use all available cores
+    n_jobs=-1  # Use all available cores
 )
 
 # Fit GridSearchCV
@@ -213,36 +198,13 @@ grid_search.fit(X_train, y_train)
 best_params = grid_search.best_params_
 print(f"Best Parameters: {best_params}")
 
-# Access the best model from the grid search
-best_model = grid_search.best_estimator_
-
-# Get the XGBoost model from the pipeline
-xgb_model = best_model.named_steps["model"]
-
-# Get feature importances
-importances = xgb_model.feature_importances_
-
-# Retrieve feature names
-preprocessor = best_model.named_steps["preprocessor"]
-numerical_features = preprocessor.transformers_[0][2]
-categorical_features = preprocessor.transformers_[1][1].get_feature_names_out(categorical_columns)
-feature_names = list(numerical_features) + list(categorical_features)
-
-# Combine feature names and importances
-feature_importances = sorted(zip(feature_names, importances), key=lambda x: x[1], reverse=True)
-
-# Print sorted features by importance
-print("Feature Importances (sorted):")
-for feature, importance in feature_importances:
-    print(f"{feature}: {importance}")
-
-
 # Evaluate the model with the best parameters
 best_model = grid_search.best_estimator_
 y_pred_best = best_model.predict(X_test)
 rmse_best = np.sqrt(mean_squared_error(y_test, y_pred_best))
 print(f"Best Model RMSE: {rmse_best}")
 
+# Predictions on test data
 merged_df_test = _encode_dates(merged_df_test)
 merged_df_test = _encode_features(merged_df_test)
 X_pred = merged_df_test
