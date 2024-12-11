@@ -9,18 +9,64 @@ from sklearn.svm import SVR
 from sklearn.metrics import mean_squared_error
 import holidays
 
-train_df = pd.read_parquet("/kaggle/input/msdb-2024/train.parquet")
-train_df = train_df[['counter_name', 'date', 'latitude', 'longitude', 'log_bike_count']]
+# Read data
+train_df = pd.read_parquet("data/train.parquet")
+train_df = train_df[['counter_name', 'date', 'latitude', 'longitude',
+                     'log_bike_count']]
 
-test_df = pd.read_parquet("/kaggle/input/msdb-2024/final_test.parquet")
+test_df = pd.read_parquet("data/final_test.parquet")
+test_df = test_df[['counter_name', 'date', 'latitude', 'longitude']]
 
-weather_df = pd.read_csv("/kaggle/input/msdb-2024/external_data.csv")
+def add_covid(data):
+    url = "https://opendata.ecdc.europa.eu/covid19/nationalcasedeath_eueea_daily_ei/csv"
+
+    # Load the CSV file directly into a Pandas DataFrame
+    df = pd.read_csv(url)
+
+    # Filter the DataFrame for France
+    covid_df = df[df['countriesAndTerritories'] == 'France']
+
+    covid_df['date'] = pd.to_datetime(covid_df['dateRep'], format='%d/%m/%Y')
+
+    df = pd.DataFrame(data)
+    df['date'] = pd.to_datetime(df['date'])
+
+    # Extract the date (without time) from the bike data
+    df['date_only'] = df['date'].dt.date
+
+    # Ensure the same for COVID data (extract date without time)
+    covid_df['date_only'] = covid_df['date'].dt.date
+    covid_df['covid_cases'] = covid_df['cases']
+
+    # Merge the COVID data with your bike data based on the date (ignoring the time part)
+    merged_df = pd.merge(df, covid_df[['date_only', 'covid_cases']], on='date_only', how='left')
+
+    # Drop the 'date_only' column as it's no longer needed
+    merged_df.drop('date_only', axis=1, inplace=True)
+
+    # Calculate the 7-day rolling average of new COVID cases
+    merged_df['7_day_rolling_avg_covid'] = merged_df['covid_cases'].rolling(window=7, min_periods=1).mean()
+    return merged_df
+
+train_df = add_covid(train_df)
+test_df = add_covid(test_df)
+
+# Weather data preprocessing
+weather_df = pd.read_csv("external_data/external_data.csv")
+
 # Drop columns with many nan values
 threshold = len(weather_df) * 0.8
 weather_df = weather_df.dropna(axis=1, thresh=threshold)
-weather_df = weather_df[["date", "t","ff", "pres", "rafper", "u", "vv", "rr1", "rr3", "rr6", "rr12"]]
-# Replace negative values in the 'rr1' column with 0
-weather_df['rr1'] = weather_df['rr1'].apply(lambda x: max(x, 0))
+weather_df = weather_df[["date", "t","ff", "pres", "rafper", "u", "vv",
+                         "rr1", "rr3", "rr6", "rr12", 'td', 'ww',
+                        'raf10', 'etat_sol']]
+
+# Drop rows with any NaN values
+weather_df = weather_df.dropna()
+
+# Replace negative values in rainfall columns with 0
+for col in ['rr1', 'rr3', 'rr6', 'rr12']:
+    weather_df[col] = weather_df[col].apply(lambda x: max(x, 0))
 
 weather_df['date'] = pd.to_datetime(weather_df['date'])
 weather_df.set_index('date', inplace=True)
@@ -33,17 +79,16 @@ weather_df.reset_index(inplace=True)
 
 # Merge the DataFrames on the 'date' column
 merged_df = pd.merge(train_df, weather_df, on='date', how='inner')
+merged_df_test = pd.merge(test_df, weather_df, on='date', how='inner')
 
-# Merge the DataFrames on the 'date' column
-merged_df_test  = pd.merge(test_df, weather_df, on='date', how='inner')
-
-holidays = holidays.CountryHoliday('France')
-def is_holiday(date): # 1: holiday, 0: not holiday
-    return 1 if date in holidays else 0
+# Holidays and date encoding
+holidays_fr = holidays.CountryHoliday('France')
+def is_holiday(date):
+    return 1 if date in holidays_fr else 0
 
 def _encode_dates(X):
-    X = X.copy()  # modify a copy of X
-    # Encode the date information from the DateOfDeparture columns
+    X = X.copy()
+    # Encode the date information from the date columns
     X["year"] = X["date"].dt.year
     X["month"] = X["date"].dt.month
     X["day"] = X["date"].dt.day
@@ -51,20 +96,26 @@ def _encode_dates(X):
     X["hour"] = X["date"].dt.hour
     X['day_of_week'] = X['date'].dt.dayofweek
 
-    X['is_weekend'] = X['day_of_week'].apply(lambda x: 1 if x >= 5 else 0) # 1: weekend, 0: weekday
+    X['is_weekend'] = X['day_of_week'].apply(lambda x: 1 if x >= 5 else 0)
     X['is_holiday'] = X['date'].apply(is_holiday)
 
-    # Finally we can drop the original columns from the dataframe
+    # Cyclical encoding for time-based features
+    X['hour_sin'] = np.sin(2 * np.pi * X['hour']/24)
+    X['hour_cos'] = np.cos(2 * np.pi * X['hour']/24)
+    X['day_of_week_sin'] = np.sin(2 * np.pi * X['day_of_week']/7)
+    X['day_of_week_cos'] = np.cos(2 * np.pi * X['day_of_week']/7)
+    X['month_sin'] = np.sin(2 * np.pi * X['month']/12)
+    X['month_cos'] = np.cos(2 * np.pi * X['month']/12)
+
     return X.drop(columns=["date"])
 
 def _encode_features(X):
     X = X.copy()
-    #X['temp_hour'] = X['t'] * X['hour_sin']
-    X['temp_hour'] = X['t'] * X['hour']
+    # Feature engineering
+    X['temp_hour'] = X['t'] * X['hour_sin']
     X['weekend_temp'] = X['t'] * X['is_weekend']
 
-
-    # Create comfort index (simplified version of feels-like temperature)
+    # Comfort index
     X['comfort_index'] = X['t'] - 0.55 * (1 - X['u']/100) * (X['t'] - 14)
 
     # Rain intensity categories
@@ -75,6 +126,7 @@ def _encode_features(X):
 
     # Wind categories
     X['high_wind'] = (X['ff'] > X['ff'].mean() + X['ff'].std()).astype(int)
+
     return X.drop(columns=["rr3", "rr6", "rr12"])
 
 # Encode date features
@@ -83,17 +135,25 @@ merged_df = _encode_features(merged_df)
 
 # Define feature columns
 categorical_columns = ['counter_name', 'is_weekend', 'is_holiday']
-numerical_columns = ["latitude", "longitude", "t", "ff", "pres", "rafper", "u", "vv", "rr1", "year", "month", "day", "weekday", "hour", 'day_of_week', 'temp_hour', 'weekend_temp', 'comfort_index', 'rain_intensity', 'high_wind']
+numerical_columns = ["latitude", "longitude", "t", "ff", "pres", "rafper",
+                     "u", "vv", "rr1", "year", "month", "day", "weekday",
+                     "hour", 'day_of_week', 'temp_hour', 'weekend_temp',
+                     'comfort_index', 'rain_intensity', 'high_wind',
+                     'hour_sin', 'hour_cos', 'day_of_week_sin',
+                     'day_of_week_cos', 'month_sin', 'month_cos',
+                     '7_day_rolling_avg_covid', 'covid_cases',
+                     'td', 'ww','raf10', 'etat_sol']
+
 target_column = "log_bike_count"
 
-# Split data into features and target
+# Prepare the data
 X = merged_df[categorical_columns + numerical_columns]
 y = merged_df[target_column]
 
 # Split data into training and testing sets
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-# Preprocessing for numerical and categorical columns
+# Preprocessing
 numerical_preprocessor = StandardScaler()
 categorical_preprocessor = OneHotEncoder(handle_unknown="ignore")
 
@@ -104,37 +164,34 @@ preprocessor = ColumnTransformer(
     ]
 )
 
-# Define the SVR model
-svr_model = SVR(kernel="rbf")  # You can try other kernels like "linear", "poly", etc.
+# Define SVM model
+svm_model = SVR(kernel='rbf', C=10, epsilon=0.1)
 
-# Create the pipeline with SVR
-pipeline = Pipeline(steps=[("preprocessor", preprocessor), ("model", svr_model)])
+# Create the pipeline
+pipeline = Pipeline(steps=[
+    ("preprocessor", preprocessor),
+    ("model", svm_model)
+])
 
-# Train the SVR model
-pipeline.fit(X_train, y_train)
 
-# Make predictions
-y_pred = pipeline.predict(X_test)
 
-# Evaluate the model
-rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-print(f"RMSE: {rmse}")
-
-# Define the parameter grid for SVR
+# Define the parameter grid for CatBoost
 param_grid = {
-    "model__C": [1, 10, 100],  # Regularization parameter
-    "model__gamma": ["scale", "auto", 0.1, 0.01],  # Kernel coefficient
-    "model__epsilon": [0.1, 0.2, 0.5]  # Epsilon in the epsilon-SVR model
+    "model__kernel": ["linear", "poly", "rbf", "sigmoid"],  # different kernel types
+    "model__C": [0.1, 1, 10],  # regularization parameter
+    "model__epsilon": [0.01, 0.1, 0.2],  # epsilon in the SVM loss function
 }
 
 # Use GridSearchCV to find the best hyperparameters
+from sklearn.model_selection import GridSearchCV
+
 grid_search = GridSearchCV(
     pipeline,
     param_grid=param_grid,
-    cv=3,  # 3-fold cross-validation
+    cv=3,
     scoring="neg_mean_squared_error",
     verbose=1,
-    n_jobs=-1,  # Use all available cores
+    n_jobs=-1
 )
 
 # Fit GridSearchCV
@@ -144,17 +201,43 @@ grid_search.fit(X_train, y_train)
 best_params = grid_search.best_params_
 print(f"Best Parameters: {best_params}")
 
-# Evaluate the model with the best parameters
+# Access the best model from the grid search
 best_model = grid_search.best_estimator_
+
+# Get the CatBoost model from the pipeline
+svm_model = best_model.named_steps["model"]
+
+# # Get feature importances
+# importances = svm_model.feature_importances_
+
+# # Retrieve feature names
+# preprocessor = best_model.named_steps["preprocessor"]
+# numerical_features = preprocessor.transformers_[0][2]
+# categorical_features = preprocessor.transformers_[1][1].get_feature_names_out(categorical_columns)
+# feature_names = list(numerical_features) + list(categorical_features)
+
+# # Combine feature names and importances
+# feature_importances = sorted(zip(feature_names, importances), key=lambda x: x[1], reverse=True)
+
+# Print sorted features by importance
+# print("Feature Importances (sorted):")
+# for feature, importance in feature_importances:
+#     print(f"{feature}: {importance}")
+
+# Evaluate the model with the best parameters
 y_pred_best = best_model.predict(X_test)
 rmse_best = np.sqrt(mean_squared_error(y_test, y_pred_best))
 print(f"Best Model RMSE: {rmse_best}")
 
-# Predictions on test data
+# Prepare test data
 merged_df_test = _encode_dates(merged_df_test)
 merged_df_test = _encode_features(merged_df_test)
 X_pred = merged_df_test
+
+# Make predictions
 y_pred = best_model.predict(X_pred)
+
+# Create submission file
 results = pd.DataFrame(
     dict(
         Id=np.arange(y_pred.shape[0]),
