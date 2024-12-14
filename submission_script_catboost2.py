@@ -260,6 +260,10 @@ grid_search = GridSearchCV(
 # Fit GridSearchCV
 grid_search.fit(X_train, y_train)
 
+# Get the best parameters
+best_params = grid_search.best_params_
+print(f"Best Parameters: {best_params}")
+
 # Access the best model from the grid search
 best_model = grid_search.best_estimator_
 
