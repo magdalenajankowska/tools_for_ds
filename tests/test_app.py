@@ -22,9 +22,10 @@ def test_columns_exist():
     for col in expected_columns:
         assert col in df.columns, f"Column '{col}' should exist in the dataset"
 
+
 def test_load_data_with_filter():
     """Test that load_data returns a filtered DataFrame correctly."""
-    df = load_data(start_date="2023-01-01", end_date="2023-01-31")
+    df = load_data(start_date="2020-01-01", end_date="2021-01-31")
     assert not df.empty, "Filtered DataFrame should not be empty"
     assert df["date"].min() >= pd.to_datetime("2023-01-01")
     assert df["date"].max() <= pd.to_datetime("2023-01-31")
