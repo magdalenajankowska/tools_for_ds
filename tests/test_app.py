@@ -27,5 +27,5 @@ def test_load_data_with_filter():
     """Test that load_data returns a filtered DataFrame correctly."""
     df = load_data(start_date="2020-01-01", end_date="2021-01-31")
     assert not df.empty, "Filtered DataFrame should not be empty"
-    assert df["date"].min() >= pd.to_datetime("2023-01-01")
-    assert df["date"].max() <= pd.to_datetime("2023-01-31")
+    assert df["date"].min() >= pd.to_datetime("2020-01-01")
+    assert df["date"].max() <= pd.to_datetime("2021-01-31")
