@@ -7,9 +7,15 @@ import pydeck as pdk
 
 # Load data
 @st.cache_data
-def load_data():
+def load_data(start_date=None, end_date=None):
     df = pd.read_parquet("data/train.parquet")
     df["date"] = pd.to_datetime(df["date"])
+
+    if start_date:
+        df = df[df["date"] >= pd.to_datetime(start_date)]
+    if end_date:
+        df = df[df["date"] <= pd.to_datetime(end_date)]
+
     return df
 
 
