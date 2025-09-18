@@ -1,4 +1,3 @@
-@"
 # Bike Counters Project
 
 This repository contains a complete data science project on the **Bike Counters dataset**.
