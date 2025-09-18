@@ -6,3 +6,11 @@ scikit-learn
 folium
 ipython
 jupyterlab
+streamlit
+numpy
+seaborn
+xgboost
+lightgbm
+catboost
+pyarrow
+
